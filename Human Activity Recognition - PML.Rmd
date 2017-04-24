@@ -1,0 +1,133 @@
+---
+title: "Prediction Assignment - Human Activity Recognition"
+author: "Ivan"
+date: "April 24, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preface
+
+Thank you for taking your time to review my assignment. I hope you are enjoying the course as well. I really appreciate if you could feedback to me if there is any mistakes or suggestions for this assignment.
+
+## Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit is common nowadays where people normally use it to quantify how much they do a particular activity. However, they rarely quantify how well they do it. 
+
+In this study, data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants are analysed to study the quality of activity execution. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. See [Weight Lifting Exercise Dataset](http://groupware.les.inf.puc-rio.br/har) for more information.
+
+## Load required libraries
+
+First of all, let's load a few essential libraries that will aid us in further analysis of this study.
+
+```{r loadLib,results='hide',warning=F,message=F}
+library(gridExtra)      # for visualization
+library(ggplot2)        # for visualization
+library(FSelector)      # for features selection
+library(randomForest)   # for model fitting
+```
+
+## Load dataset
+
+`training` data and `testing` data are loaded respectively.
+
+```{r loadData}
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+```
+
+## Exploratory analysis
+
+```{r exploreData1}
+summary(training$classe)
+```
+
+Looking at the `training` data, the distribution of target variable `classe` shows that specified execution `A` are performed mostly. Whereas, the other 4 `classe`, namely `B`, `C`, `D` and `E` show less occurences than `A`.
+
+```{r exploreData2}
+length(which(apply(training,2,function(x){anyNA(x)|any(x=="")})))
+```
+
+There is a significant number of features with missing values, either coded as `NA` or just `""`.
+
+```{r exploreData3}
+naCheck <- apply(training,2,function(x){length(which((is.na(x)|x=="")))})
+unique(naCheck)
+naIdx <- which(naCheck==19216)
+names(training)[naIdx][c(1:5,95:100)]
+```
+
+These variables are mainly mean, variance, standard deviation, max, min, amplitude, kurtosis and skewness of Euler angles of each sensors.
+
+Since these variables are not useful in this context, in addition to having consistent missing values, these variables should be filtered.
+
+The following exploratory visualization is attempted to understand the relationship between `classe` and time-related variables in `training`. From the plots below, we can infer that the they are not correlated.
+
+```{r exploreData4,fig.height=5,fig.width=10}
+eData <- training[,c(3,4,160)]
+eData$time <- eData$raw_timestamp_part_1 + eData$raw_timestamp_part_2
+expPlot <- ggplot(data=eData)+geom_boxplot(aes(x=classe,y=time))
+grid.arrange(expPlot,expPlot + geom_jitter(aes(x=classe,y=time)),ncol=2,nrow=1)
+```
+
+```{r updateData1}
+trainData <- training[,-naIdx]
+trainData <- trainData[trainData$new_window=="no",]
+trainData <- subset(trainData,select=-c(X,raw_timestamp_part_1,raw_timestamp_part_2,cvtd_timestamp,new_window))
+```
+
+The `trainData` is further filtered to use only observations with `no` as `new_window` value for this study. `X` (_index running number_) and 3 other time-related variables are omitted from `trainData` since these information are not useful for this study. 
+
+## Features selection
+
+```{r fs1}
+length(names(trainData))
+```
+
+Although `trainData` has been subsetted by removing unnecessary variables, the number of features is still quite large. Hence, features selection process is performed on `trainData`, using [chi-squared filter](https://rdrr.io/cran/FSelector/man/chi.squared.html).
+
+From the selection result, variables with attribute importance more than 0.3 are selected for further analysis. Selected variables are as follow:
+
+```{r fs2}
+fsRes <- chi.squared(classe~.,data=trainData)
+selIdx <- which(fsRes$attr_importance > 0.3)
+selIdx <- names(trainData)[selIdx]
+selIdx <- c(selIdx,"classe")
+selIdx
+```
+
+## Model fitting
+
+For model fitting, `randomForest` is used with default `ntree` of 500 for both following fits.
+
+`fit1` is fitted using variables from subsetted dataset, while `fit2` is fitted using variables selected from chi-squared filter on subsetted dataset.
+
+```{r buildModel,cache=T}
+set.seed(1)
+fit1 <- randomForest(classe~.,data=trainData)
+fit1
+
+set.seed(1)
+fit2 <- randomForest(classe~.,data=trainData[,selIdx])
+fit2
+```
+
+The concept of [out-of-bag error rate](https://en.wikipedia.org/wiki/Out-of-bag_error) (OOB) in `randomForest` model is similar to cross-validation. Hence, using OOB error rate to assess model performance, we can observe that using selected variables slightly improve OOB error rate of the fitted `randomForest` model.
+
+Finally, the expected out-of-sample error of our selected model `fit2` would be the OOB error rate of the model, __0.1%__.
+
+## Testing
+
+Both fitted models are used to test against `testing` data, which show same prediction results for these 20 use cases. This is not surprising since these 2 models are not significantly different in term of OOB error rates.
+
+```{r testModel}
+predict(fit1,newdata = testing)
+predict(fit2,newdata = testing)
+```
+
+## Reference
+
+1. Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. [Qualitative Activity Recognition of Weight Lifting Exercises](http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201). Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
